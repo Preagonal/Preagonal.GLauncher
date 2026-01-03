@@ -1,0 +1,14 @@
+EXPORTS
+GetFileVersionInfoA = GetFileVersionInfoA_proxy
+GetFileVersionInfoW = GetFileVersionInfoW_proxy
+GetFileVersionInfoSizeA = GetFileVersionInfoSizeA_proxy
+GetFileVersionInfoSizeW = GetFileVersionInfoSizeW_proxy
+VerFindFileA = VerFindFileA_proxy
+VerFindFileW = VerFindFileW_proxy
+VerInstallFileA = VerInstallFileA_proxy
+VerInstallFileW = VerInstallFileW_proxy
+VerLanguageNameA = VerLanguageNameA_proxy
+VerLanguageNameW = VerLanguageNameW_proxy
+VerQueryValueA = VerQueryValueA_proxy
+VerQueryValueW = VerQueryValueW_proxy
+
