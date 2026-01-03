@@ -1,0 +1,5 @@
+const unsigned char con_png_data[] = { @CON_PNG_HEX@ };
+const size_t con_png_size = sizeof(con_png_data);
+
+const unsigned char conf_gs_data[] = { @CONF_GS_HEX@ };
+const size_t conf_gs_size = sizeof(conf_gs_data);
