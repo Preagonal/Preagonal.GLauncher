@@ -148,16 +148,16 @@ bool ShowServerSelectDialog(const std::string& licenseFile) {
     wc.hIcon = hIcon;
     wc.hIconSm = hIcon;
     RegisterClassExA(&wc);
-    HWND hwnd = CreateWindowExA(WS_EX_DLGMODALFRAME, "GLauncherServerSelect", "GLauncher - Select Server", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 400, 100 + (g_servers.size() * 40), NULL, NULL, GetModuleHandle(NULL), NULL);
+    HWND hwnd = CreateWindowExA(WS_EX_DLGMODALFRAME, "GLauncherServerSelect", "GLauncher - Select Server", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 340, 100 + (g_servers.size() * 40), NULL, NULL, GetModuleHandle(NULL), NULL);
     if (!hwnd) return false;
     SendMessageA(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
     SendMessageA(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
     HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    HWND hLabel = CreateWindowExA(0, "STATIC", "Select a server:", WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 10, 380, 20, hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND hLabel = CreateWindowExA(0, "STATIC", "Select a server:", WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 10, 320, 20, hwnd, NULL, GetModuleHandle(NULL), NULL);
     SendMessageA(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
     for (size_t i = 0; i < g_servers.size(); i++) {
         std::string btnText = g_servers[i].ip + ":" + g_servers[i].port;
-        HWND hBtn = CreateWindowExA(0, "BUTTON", btnText.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_TEXT, 10, 40 + (i * 40), 280, 30, hwnd, (HMENU)(1000 + i), GetModuleHandle(NULL), NULL);
+        HWND hBtn = CreateWindowExA(0, "BUTTON", btnText.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_TEXT, 5, 40 + (i * 40), 310, 30, hwnd, (HMENU)(1000 + i), GetModuleHandle(NULL), NULL);
         SendMessageA(hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
     }
     ShowWindow(hwnd, SW_SHOW);

@@ -25,3 +25,6 @@ cmake_install.cmake
 *.json
 *.yaml
 *.bak
+
+src/rsc/con.png
+src/rsc/conf.gs
