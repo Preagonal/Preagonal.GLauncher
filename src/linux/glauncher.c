@@ -220,6 +220,8 @@ static void on_server_selected(GtkWidget *widget, gpointer data) {
 
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES) {
         selected_server = idx;
+        GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+        gtk_widget_destroy(toplevel);
         gtk_main_quit();
     }
     gtk_widget_destroy(dialog);
