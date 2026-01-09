@@ -34,7 +34,7 @@ static int (*real_connect)(int, const struct sockaddr*, socklen_t) = NULL;
 
 static const char* graal_hosts[] = {
     "loginserver.graalonline.com",
-    "Graalonline.com",
+    "listserver.graalonline.com",
     "loginserver2.graalonline.com",
     "loginserver3.graalonline.com"
 };
