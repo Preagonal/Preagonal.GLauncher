@@ -26,5 +26,5 @@ cmake_install.cmake
 *.yaml
 *.bak
 
-src/rsc/con.png
-src/rsc/conf.gs
+src/rsc/
+.aider*
