@@ -22,7 +22,6 @@ static bool g_bHooksAttached = false;
 static HHOOK g_hKeyboardHook = NULL;
 static uint16_t g_httpServerPort = 0;
 
-
 struct LicenseDataStruct {
     LicenseDataStruct() : hostPort("14900"), targetExe("") { }
     std::unordered_map<std::string, std::string> hostResolves;
@@ -64,7 +63,6 @@ static std::vector<std::string> GetLicenseFilePaths() {
     return paths;
 }
 
-
 bool ReadLicensesFile(const std::string& file) {
     LicenseData = {};
     std::ifstream input(file);
@@ -96,6 +94,21 @@ struct ServerEntry {
 
 static std::vector<ServerEntry> g_servers;
 static int g_selectedServer = -1;
+static HWND g_hFoundWindow = NULL;
+
+BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
+    DWORD windowPid;
+    GetWindowThreadProcessId(hwnd, &windowPid);
+    if (windowPid == (DWORD)lParam && IsWindowVisible(hwnd)) {
+        char className[256];
+        GetClassNameA(hwnd, className, sizeof(className));
+        if (strcmp(className, "UnityWndClass") == 0) {
+            g_hFoundWindow = hwnd;
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
 
 LRESULT CALLBACK ServerDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
@@ -133,6 +146,23 @@ bool ShowServerSelectDialog(const std::string& licenseFile) {
     }
     input.close();
     if (g_servers.empty()) return false;
+
+    int dialogWidth = 235;
+    int dialogHeight = 100 + (g_servers.size() * 40);
+    int posX = CW_USEDEFAULT, posY = CW_USEDEFAULT;
+
+    g_hFoundWindow = NULL;
+    DWORD pid = GetCurrentProcessId();
+    EnumWindows(EnumWindowsProc, pid);
+    HWND hGraal = g_hFoundWindow;
+
+    if (hGraal) {
+        RECT graalRect;
+        GetWindowRect(hGraal, &graalRect);
+        posX = graalRect.left + (graalRect.right - graalRect.left - dialogWidth) / 2;
+        posY = graalRect.top + (graalRect.bottom - graalRect.top - dialogHeight) / 2;
+    }
+
     HICON hIcon = (HICON)LoadImageA(NULL, MAKEINTRESOURCEA(32512), IMAGE_ICON, 0, 0, LR_SHARED);
     char exePath[MAX_PATH];
     if (GetModuleFileNameA(NULL, exePath, MAX_PATH)) {
@@ -148,16 +178,22 @@ bool ShowServerSelectDialog(const std::string& licenseFile) {
     wc.hIcon = hIcon;
     wc.hIconSm = hIcon;
     RegisterClassExA(&wc);
-    HWND hwnd = CreateWindowExA(WS_EX_DLGMODALFRAME, "GLauncherServerSelect", "GLauncher - Select Server", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 340, 100 + (g_servers.size() * 40), NULL, NULL, GetModuleHandle(NULL), NULL);
-    if (!hwnd) return false;
+
+    if (hGraal) ShowWindow(hGraal, SW_HIDE);
+
+    HWND hwnd = CreateWindowExA(WS_EX_DLGMODALFRAME, "GLauncherServerSelect", "GLauncher - Select Server", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, posX, posY, dialogWidth, dialogHeight, NULL, NULL, GetModuleHandle(NULL), NULL);
+    if (!hwnd) {
+        if (hGraal) ShowWindow(hGraal, SW_SHOW);
+        return false;
+    }
     SendMessageA(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
     SendMessageA(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
     HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    HWND hLabel = CreateWindowExA(0, "STATIC", "Select a server:", WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 10, 320, 20, hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND hLabel = CreateWindowExA(0, "STATIC", "Select a server:", WS_CHILD | WS_VISIBLE | SS_LEFT, 10, 10, 210, 20, hwnd, NULL, GetModuleHandle(NULL), NULL);
     SendMessageA(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
     for (size_t i = 0; i < g_servers.size(); i++) {
         std::string btnText = g_servers[i].ip + ":" + g_servers[i].port;
-        HWND hBtn = CreateWindowExA(0, "BUTTON", btnText.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_TEXT, 5, 40 + (i * 40), 310, 30, hwnd, (HMENU)(1000 + i), GetModuleHandle(NULL), NULL);
+        HWND hBtn = CreateWindowExA(0, "BUTTON", btnText.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_TEXT, 10, 40 + (i * 40), 200, 30, hwnd, (HMENU)(1000 + i), GetModuleHandle(NULL), NULL);
         SendMessageA(hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
     }
     ShowWindow(hwnd, SW_SHOW);
@@ -168,6 +204,8 @@ bool ShowServerSelectDialog(const std::string& licenseFile) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    if (hGraal) ShowWindow(hGraal, SW_SHOW);
     if (g_selectedServer < 0) return false;
     LicenseData = {};
     LicenseData.hostResolves[ogHostNames[0]] = g_servers[g_selectedServer].ip;

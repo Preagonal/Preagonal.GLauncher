@@ -1,3 +1,2 @@
-CONPNG RCDATA "../rsc/con.png"
-CONFGS RCDATA "../rsc/conf.gs"
-
+#include "windows.h"
+101 RCDATA "../rsc/bootstrap.gs2"
