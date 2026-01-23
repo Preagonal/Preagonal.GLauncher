@@ -26,7 +26,7 @@ if(WIN32)
     include_directories(../GWauncher/dependencies/detours/lib/src ../gs2-parser/src)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_library(glauncher SHARED
-            src/win/glauncher.cpp
+            src/win/glauncherw.cpp
             src/win/defs.h
             src/win/Utils.hpp
             src/win/Memory.hpp
