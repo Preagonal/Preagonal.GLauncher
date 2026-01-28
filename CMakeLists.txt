@@ -20,10 +20,10 @@ if(WIN32)
     set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /RELEASE /INCREMENTAL:NO")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
-    add_subdirectory(../GWauncher/dependencies/detours detours)
+    add_subdirectory(dependencies/detours detours)
     set(STATIC ON CACHE BOOL "Build static library" FORCE)
     add_subdirectory(../gs2-parser gs2-parser)
-    include_directories(../GWauncher/dependencies/detours/lib/src ../gs2-parser/src)
+    include_directories(dependencies/detours/lib/src ../gs2-parser/src)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         add_library(glauncher SHARED
             src/win/glauncherw.cpp
