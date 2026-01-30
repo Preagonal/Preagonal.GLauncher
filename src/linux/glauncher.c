@@ -347,11 +347,19 @@ static void init(void) {
     start_keyboard_monitor();
 
     char exe_path[1024];
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len > 0) {
-        exe_path[len] = '\0';
+    const char* appimage = getenv("APPIMAGE");
+    if (appimage && appimage[0]) {
+        strncpy(exe_path, appimage, sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = '\0';
         char* last = strrchr(exe_path, '/');
         if (last) *last = '\0';
+    } else {
+        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (len > 0) {
+            exe_path[len] = '\0';
+            char* last = strrchr(exe_path, '/');
+            if (last) *last = '\0';
+        }
     }
 
     const char* paths[] = {
