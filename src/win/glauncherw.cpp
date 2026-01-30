@@ -244,9 +244,15 @@ void __cdecl enterNextConnectorMode(int mode) {
     }
     if (g_EnableConsole) printf("[GS2Parser]: Original GS2 size: %zu\n", gs2_code.size());
     if (!g_selectedHost.empty()) {
-        auto replace = [](std::string& s, const char* search, const char* repl) { size_t pos = s.find(search); if (pos != std::string::npos) s.replace(pos + strlen(search), s.find("\"", pos + strlen(search)) - (pos + strlen(search)), repl); };
-        replace(gs2_code, "this.loginhost = \"", g_selectedHost.c_str());
-        replace(gs2_code, "this.loginport = \"", g_selectedPort.c_str());
+        auto checkPacketLog = [](const std::string& path) { std::ifstream f(path); std::string line; return std::getline(f, line) && line == "true"; };
+        auto replaceStr = [](std::string& s, const char* search, const char* repl) { size_t pos = s.find(search); if (pos != std::string::npos) s.replace(pos + strlen(search), s.find("\"", pos + strlen(search)) - (pos + strlen(search)), repl); };
+        auto replaceBool = [](std::string& s, const char* search, const char* repl) { size_t pos = s.find(search); if (pos != std::string::npos) s.replace(pos, strlen(search), repl); };
+        bool hasNP = g_selectedPort.size() >= 2 && g_selectedPort.substr(g_selectedPort.size() - 2) == "NP";
+        bool hasPacketLog = checkPacketLog("license.packet") || checkPacketLog("license/license.packet") || (!exeDir.empty() && (checkPacketLog(exeDir + "\\license.packet") || checkPacketLog(exeDir + "\\license\\license.packet")));
+        if (hasNP) replaceBool(gs2_code, "this.loginnewprotocol = false;", "this.loginnewprotocol = true;");
+        if (hasPacketLog) replaceBool(gs2_code, "this.loginpacketlog = false;", "this.loginpacketlog = true;");
+        replaceStr(gs2_code, "this.loginhost = \"", g_selectedHost.c_str());
+        replaceStr(gs2_code, "this.loginport = \"", (hasNP ? g_selectedPort.substr(0, g_selectedPort.size() - 2) : g_selectedPort).c_str());
         if (g_EnableConsole) printf("[GS2Parser]: After replacement GS2 size: %zu\n", gs2_code.size());
     }
     auto response = GS2Context::Compile(gs2_code);
