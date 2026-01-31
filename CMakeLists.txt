@@ -77,5 +77,20 @@ elseif(UNIX AND NOT APPLE)
         OUTPUT_NAME "glauncher"
         PREFIX ""
     )
+elseif(APPLE)
+    find_library(COCOA_LIBRARY Cocoa REQUIRED)
+    find_library(CARBON_LIBRARY Carbon REQUIRED)
+    add_library(glauncher SHARED
+        src/osx/glauncher.m
+        src/osx/rsc_data.c
+    )
+    target_include_directories(glauncher PRIVATE src/osx)
+    target_compile_options(glauncher PRIVATE -fobjc-arc)
+    target_link_libraries(glauncher ${COCOA_LIBRARY} ${CARBON_LIBRARY} dl pthread)
+    set_target_properties(glauncher PROPERTIES
+        OUTPUT_NAME "glauncher"
+        PREFIX "lib"
+        SUFFIX ".dylib"
+    )
 
 endif()
