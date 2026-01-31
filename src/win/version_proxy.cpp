@@ -31,7 +31,7 @@ static const char* ogHostNames[4];
 
 static void InitHostNames() {
     ogHostNames[0] = "loginserver.graalonline.com";
-    ogHostNames[1] = "Graalonline.com";
+    ogHostNames[1] = "listserver.graalonline.com";
     ogHostNames[2] = "loginserver2.graalonline.com";
     ogHostNames[3] = "loginserver3.graalonline.com";
 }

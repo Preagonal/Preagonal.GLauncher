@@ -32,6 +32,9 @@ struct LicenseDataStruct {
 static LicenseDataStruct LicenseData{};
 static std::string ogHostNames[6];
 
+/*
+    This thing is honestly pure fucking garbage, don't use it unless you have to.
+*/
 static void InitHostNames() {
     ogHostNames[0] = "loginserverworlds.graalonline.com";
     ogHostNames[1] = "listserver.graalonline.com";

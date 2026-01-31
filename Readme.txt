@@ -23,3 +23,4 @@ Using the launcher dll will allow you to connect to a different login server wit
 
 - dxgi.dll: Old version of GLauncherW.dll that works with Era/Steam/Normal worlds but still relies on the connector script from con.quattroplay.com so it's detour forwarding is a bit iffy.
   
+
