@@ -97,6 +97,30 @@ namespace Memory {
         }
         return false;
     }
+
+    /**
+     * Patches memory with raw bytes
+     * @param address Pointer to memory location
+     * @param bytes Byte array to write
+     * @param size Number of bytes to write
+     * @return true if patch was successful
+     */
+    inline bool patch(void* address, const uint8_t* bytes, size_t size) {
+        if (!address || !bytes || size == 0) {
+            return false;
+        }
+
+        DWORD oldProtect;
+        if (!VirtualProtect(address, size, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            return false;
+        }
+
+        memcpy(address, bytes, size);
+        FlushInstructionCache(GetCurrentProcess(), address, size);
+
+        VirtualProtect(address, size, oldProtect, &oldProtect);
+        return true;
+    }
 }
 
 #endif // MEMORY_HOOK_HPP
