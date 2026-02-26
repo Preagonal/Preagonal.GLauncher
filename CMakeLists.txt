@@ -1,12 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(GLauncher)
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Enable MASM assembler
 enable_language(ASM_MASM)
-
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
@@ -16,7 +12,6 @@ foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_SOURCE_DIR}/bin)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_SOURCE_DIR}/bin)
 endforeach()
-
 if(WIN32)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT /RELEASE")
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /RELEASE /INCREMENTAL:NO")
@@ -24,6 +19,13 @@ if(WIN32)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
     add_subdirectory(dependencies/detours detours)
+    foreach(OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES})
+        string(TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG)
+        set_target_properties(lib_detours PROPERTIES
+            ARCHIVE_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_BINARY_DIR}/detours_private
+            PDB_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${CMAKE_BINARY_DIR}/detours_private
+        )
+    endforeach()
     set(STATIC ON CACHE BOOL "Build static library" FORCE)
     add_subdirectory(../gs2-parser gs2-parser)
     include_directories(dependencies/detours/lib/src ../gs2-parser/src)
@@ -36,7 +38,7 @@ if(WIN32)
             src/win/pch.h
             src/win/pch.cpp
             src/win/framework.h
-            src/win/resources.rc
+            src/win/resources_glauncherw.rc
         )
         set_target_properties(glauncher PROPERTIES
             OUTPUT_NAME "GLauncherW"
@@ -52,13 +54,6 @@ if(WIN32)
             LINK_FLAGS "/INCREMENTAL:NO /NOEXP /IMPLIB:NONE"
         )
         target_link_libraries(dxgi lib_detours)
-        add_library(version SHARED src/win/version_proxy.cpp src/win/version.def src/win/resources.rc)
-        set_target_properties(version PROPERTIES
-            OUTPUT_NAME "version"
-            PREFIX ""
-            LINK_FLAGS "/INCREMENTAL:NO /NOEXP /IMPLIB:NONE"
-        )
-        target_link_libraries(version lib_detours version.lib)
     else()
         add_library(version SHARED src/win/version_proxy.cpp src/win/version.def src/win/resources.rc)
         set_target_properties(version PROPERTIES
@@ -95,5 +90,4 @@ elseif(APPLE)
         PREFIX "lib"
         SUFFIX ".dylib"
     )
-
 endif()
