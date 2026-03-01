@@ -1,6 +1,5 @@
-# Detours
 set(TARGET lib_detours)
-set(DETOURS_SOURCE lib/src)
+set(DETOURS_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/lib/src)
 
 add_library(${TARGET} STATIC
     ${DETOURS_SOURCE}/creatwth.cpp
@@ -17,10 +16,7 @@ add_library(${TARGET} STATIC
     ${DETOURS_SOURCE}/modules.cpp
     ${DETOURS_SOURCE}/uimports.cpp)
 
-# This file is included and not compiled on its own
-set_property (
-    SOURCE ${DETOURS_SOURCE}/uimports.cpp
-    APPEND PROPERTY HEADER_FILE_ONLY true)
-
+set_property(SOURCE ${DETOURS_SOURCE}/uimports.cpp APPEND PROPERTY HEADER_FILE_ONLY true)
 target_compile_options(${TARGET} PRIVATE /W4 /WX /Zi /MT /Gy /Gm- /Zl /Od)
 target_include_directories(${TARGET} PUBLIC ${DETOURS_SOURCE})
+
