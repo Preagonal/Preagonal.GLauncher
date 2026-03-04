@@ -23,7 +23,7 @@ void* TGameEnvironment_universe = nullptr;
 void (*TLog_echo)(int64_t*, int64_t, int64_t, int64_t, const char*, char) = nullptr;
 uintptr_t base = 0;
 bool g_EnableConsole = false, g_DebugMode = false;
-static const int g_DevMode = 2;
+static const int g_DevMode = 2; // -1 to disable everything, 0 for bytecode/ only, 1 for offline/ only, 2 for both.
 struct hostent* (WSAAPI* True_gethostbyname)(const char*) = nullptr;
 static std::string g_selectedHost, g_selectedPort, g_startParams;
 static HANDLE g_hHookThread = NULL;
@@ -31,15 +31,6 @@ static DWORD g_HookThreadId = 0;
 static const int HOTKEY_SERVER = 1, HOTKEY_CONSOLE = 2;
 static HWND g_hHiddenWindow = NULL;
 static bool g_TLog_echoed = false;
-static HANDLE (WINAPI* True_CreateFileW)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE) = nullptr;
-static HANDLE (WINAPI* True_CreateFile2)(LPCWSTR, DWORD, DWORD, DWORD, LPCREATEFILE2_EXTENDED_PARAMETERS) = nullptr;
-static BOOL (WINAPI* True_CreateDirectoryW)(LPCWSTR, LPSECURITY_ATTRIBUTES) = nullptr;
-static DWORD (WINAPI* True_GetFileAttributesW)(LPCWSTR) = nullptr;
-static DWORD (WINAPI* True_GetFileAttributesA)(LPCSTR) = nullptr;
-static HANDLE (WINAPI* True_FindFirstFileW)(LPCWSTR, LPWIN32_FIND_DATAW) = nullptr;
-static HANDLE (WINAPI* True_FindFirstFileA)(LPCSTR, LPWIN32_FIND_DATAA) = nullptr;
-static std::wstring g_newBase, g_oldBase;
-static std::set<std::wstring> g_madeDirs;
 static std::string g_weaponDir, g_classDir, g_bytecodeWeaponDir, g_bytecodeClassDir, g_bootstrapPath;
 static TGraalVar* g_startScript = nullptr;
 static HANDLE g_watcherThread = NULL;
@@ -108,6 +99,19 @@ static std::string parseConsoleMarkup(const std::string& input) {
         }
     }
     return out + "\033[0m";
+}
+static const std::pair<const char*, const char*> g_tagColors[] = {
+    {"echo",        "\033[38;2;255;180;220m"}, {"compiler",    "\033[38;2;100;200;255m"},
+    {"bytecode",    "\033[38;2;150;100;255m"}, {"gserver",     "\033[38;2;100;255;150m"},
+    {"glauncher",   "\033[38;2;255;200;50m"},  {"GS2Parser",   "\033[38;2;255;100;100m"},
+    {"game",        "\033[38;2;255;165;0m"},   {"unity",       "\033[38;2;160;220;180m"},
+    {"graphics",    "\033[38;2;80;180;255m"},  {"files",       "\033[38;2;180;140;100m"},
+    {"scripterrors","\033[38;2;255;60;60m"},   {"pms",         "\033[38;2;255;220;100m"},
+    {nullptr, nullptr}
+};
+static const char* getTagColor(const char* tag) {
+    for (int j = 0; g_tagColors[j].first; j++) if (strcmp(tag, g_tagColors[j].first) == 0) return g_tagColors[j].second;
+    return "\033[38;2;190;190;140m";
 }
 static std::string hashFile(const std::string& c) { char b[32]; snprintf(b, sizeof(b), "%zx", std::hash<std::string>{}(c)); return b; }
 extern "C" __declspec(dllexport) void export_function() {}
@@ -213,11 +217,11 @@ namespace TLog {
         int h = st.wHour % 12 == 0 ? 12 : st.wHour % 12;
         const char* ap = st.wHour >= 12 ? "PM" : "AM";
         if (g_EnableConsole) {
-            char prefix[128]; snprintf(prefix, sizeof(prefix), "[%02d:%02d %s] [%s] ", h, st.wMinute, ap, tag);
+            char prefix[128]; snprintf(prefix, sizeof(prefix), "[%02d:%02d %s] %s[%s]\033[0m ", h, st.wMinute, ap, getTagColor(tag), tag);
             printf("%s%s\n", prefix, parseConsoleMarkup(msg).c_str());
         } else if (TGameEnvironment_universe) {
             char colored[1200]; snprintf(colored, sizeof(colored), "<b><font color=#FF1493>%s</font></b>", msg);
-            echo((int64_t*)new TString(colored), 0, 0, 0, "game", 0);
+            TLog_echo((int64_t*)new TString(colored), 0, 0, 0, "game", 0);
         }
     }
     void __cdecl echo(int64_t* p1, int64_t p2, int64_t p3, int64_t p4, const char* p5, char p6) {
@@ -226,7 +230,8 @@ namespace TLog {
         if (g_DebugMode) printf("[echo_rgb] p2=%lld p3=%lld p4=%lld p5=%s p6=%d\n", p2, p3, p4, p5 ? p5 : "null", (int)p6);
         SYSTEMTIME st; GetLocalTime(&st);
         int h = st.wHour % 12 == 0 ? 12 : st.wHour % 12;
-        printf("[%02d:%02d %s] [%s] %s\n", h, st.wMinute, st.wHour >= 12 ? "PM" : "AM", p5 ? p5 : "unity", parseConsoleMarkup(msg).c_str());
+        const char* p5tag = p5 ? p5 : "unity";
+        printf("[%02d:%02d %s] %s[%s]\033[0m %s\n", h, st.wMinute, st.wHour >= 12 ? "PM" : "AM", getTagColor(p5tag), p5tag, parseConsoleMarkup(msg).c_str());
     }
 }
 struct hostent* WSAAPI Hooked_gethostbyname(const char* name) {
@@ -255,16 +260,6 @@ static std::string urlDecode(const std::string& s) {
 namespace TFileManager { std::string GetExeDir(); std::vector<std::string> GetLicensePaths(); DWORD WINAPI WatcherThread(LPVOID); }
 
 namespace TScriptUniverse { 
-    static TGraalVar* getOrCreateClass(const std::string& name) {
-        if (g_weaponTable.count("class:" + name)) return g_weaponTable["class:" + name];
-        TString* enc = (TString*)alloc(8);
-        THashList_encodesimple(enc, new TString(name.c_str()));
-        TGraalVar* obj = reinterpret_cast<TGraalVar*>(alloc(600));
-        TGraalVar_Constructor(obj, enc);
-        ((void(__fastcall*)(TGraalVar*, int64_t))(obj->vtable[20]))(obj, 1);
-        TScriptUniverse_addStaticObject(TGameEnvironment_universe, obj);
-        return g_weaponTable["class:" + name] = obj;
-    }
     static TGraalVar* getOrCreateWeapon(const std::string& name) {
         if (g_weaponTable.count(name)) return g_weaponTable[name];
         TString* enc = (TString*)alloc(8);
@@ -274,18 +269,6 @@ namespace TScriptUniverse {
         ((void(__fastcall*)(TGraalVar*, int64_t))(obj->vtable[20]))(obj, 2);
         TScriptUniverse_addStaticObject(TGameEnvironment_universe, obj);
         return g_weaponTable[name] = obj;
-    }
-    void addWeaponScriptRaw(const std::string& name, const std::string& bytes) {
-        TGraalVar* obj = TScriptUniverse::getOrCreateWeapon(name);
-        TLog::WriteMessage("bytecode", "Weapon %s loaded", cleanName(name).c_str());
-        TGraalVar_SetScript(obj, new TString((char*)bytes.data(), bytes.size()));
-    }
-    void addClassRaw(const std::string& name, const std::string& bytes) {
-        const std::string dname = name.find('%') != std::string::npos ? urlDecode(name) : name;
-        TGraalVar* obj = TScriptUniverse::getOrCreateClass(dname);
-        TLog::WriteMessage("bytecode", "Script %s loaded", cleanName(dname).c_str());
-        TScriptUniverse_addClassScript(TGameEnvironment_universe, new TString(dname.c_str()), new TString((char*)bytes.data(), bytes.size()));
-        g_classTable[dname] = true;
     }
     void patchBootstrap(std::string& s) {
         if (g_selectedHost.empty()) return;
@@ -316,20 +299,22 @@ namespace TScriptUniverse {
         if (!resp.success) TLog::WriteMessage("GS2Parser", "<red>Script compiler output for Bootstrap (Internal)</red>:\n %s", resp.errors.empty() ? "Unknown error" : resp.errors[0].msg().c_str());
         TGraalVar_SetScript(g_startScript, new TString((char*)resp.bytecode.buffer(), resp.bytecode.length()));
     }
-    void addWeaponScript(const std::string& name, const std::string& gs2_code) {
+    void addWeaponScript(const std::string& name, const std::string& content, bool compile = true) {
         TGraalVar* obj = TScriptUniverse::getOrCreateWeapon(name);
-        auto resp = GS2Context::Compile(gs2_code);
+        if (!compile) { TLog::WriteMessage("bytecode", "Weapon %s loaded", cleanName(name).c_str()); TGraalVar_SetScript(obj, new TString((char*)content.data(), content.size())); return; }
+        auto resp = GS2Context::Compile(content);
         TLog::WriteMessage("compiler", "Weapon/GUI-script %s added/updated", name.c_str());
         if (!resp.success) TLog::WriteMessage("compiler", "<red>Script compiler output for %s</red>:\n %s", name.c_str(), resp.errors.empty() ? "unknown" : resp.errors[0].msg().c_str());
         TGraalVar_SetScript(obj, new TString((char*)resp.bytecode.buffer(), resp.bytecode.length()));
     }
-    void addClassScript(const std::string& name, const std::string& gs2_code) {
-        TGraalVar* obj = TScriptUniverse::getOrCreateClass(name);
-        auto resp = GS2Context::Compile(gs2_code);
-        TLog::WriteMessage("compiler", "Script %s added/updated", name.c_str());
-        if (!resp.success) { TLog::WriteMessage("compiler", "<red>Script compiler output for %s</red>:\n %s", name.c_str(), resp.errors.empty() ? "unknown" : resp.errors[0].msg().c_str()); return; }
-        TScriptUniverse_addClassScript(TGameEnvironment_universe, new TString(name.c_str()), new TString((char*)resp.bytecode.buffer(), resp.bytecode.length()));
-        g_classTable[name] = true;
+    void addClassScript(const std::string& name, const std::string& content, bool compile = true) {
+        const std::string dname = name.find('%') != std::string::npos ? urlDecode(name) : name;
+        if (!compile) { TLog::WriteMessage("bytecode", "Script %s loaded", cleanName(dname).c_str()); TScriptUniverse_addClassScript(TGameEnvironment_universe, new TString(dname.c_str()), new TString((char*)content.data(), content.size())); g_classTable[dname] = true; return; }
+        auto resp = GS2Context::Compile(content);
+        TLog::WriteMessage("compiler", "Script %s added/updated", dname.c_str());
+        if (!resp.success) { TLog::WriteMessage("compiler", "<red>Script compiler output for %s</red>:\n %s", dname.c_str(), resp.errors.empty() ? "unknown" : resp.errors[0].msg().c_str()); return; }
+        TScriptUniverse_addClassScript(TGameEnvironment_universe, new TString(dname.c_str()), new TString((char*)resp.bytecode.buffer(), resp.bytecode.length()));
+        g_classTable[dname] = true;
     }
     static void scanFolders(const std::string& folder, bool isClass, bool isBytecode) {
         int extLen = isBytecode ? 6 : 4;
@@ -342,35 +327,60 @@ namespace TScriptUniverse {
             if (!f.good()) continue;
             std::string content((std::istreambuf_iterator<char>(f)), {});
             TLog::WriteMessage(isBytecode ? "bytecode" : "compiler", "Loading %s as '%s'", fname.c_str(), isBytecode ? cleanName(name).c_str() : name.c_str());
-    if (isBytecode) { isClass ? TScriptUniverse::addClassRaw(name, content) : TScriptUniverse::addWeaponScriptRaw(name, content); }
-            else { isClass ? TScriptUniverse::addClassScript(name, content) : TScriptUniverse::addWeaponScript(name, content); }
+    isClass ? TScriptUniverse::addClassScript(name, content, !isBytecode) : TScriptUniverse::addWeaponScript(name, content, !isBytecode);
         } while (FindNextFileA(hFind, &fd));
         FindClose(hFind);
     }
 }
-
+static void* (__fastcall* True_getExeDir)(void*) = nullptr;
+static void* __fastcall Hooked_getExeDir(void* out) {
+    void* ret = True_getExeDir(out);
+    auto patchDAT = [](uintptr_t offset, const std::string& val) {
+        char** dat = (char**)(base + offset);
+        if (*dat) {
+            *(uint32_t*)(*dat + 0) = (uint32_t)val.size();
+            *(uint32_t*)(*dat + 4) = (uint32_t)val.size();
+            memcpy(*dat + 8, val.c_str(), val.size() + 1);
+        }
+    };
+    patchDAT(0x7ff97fc18c38 - 0x7FF97E840000, TFileManager::GetExeDir() + "\\Reborn_cache\\");
+    patchDAT(0x7ff97fc19118 - 0x7FF97E840000, TFileManager::GetExeDir() + "\\Reborn_cache\\");
+    return ret;
+}
+static void* (__fastcall* True_TGameServer_Initialize)(void*, void*) = nullptr;
+static void* __fastcall Hooked_TGameServer_Initialize(void* serverObj, void* param_2) {
+    void* result = True_TGameServer_Initialize(serverObj, param_2);
+    TLog::WriteMessage("glauncher", "Server change detected, reloading classes.");
+    CreateThread(NULL, 0, [](LPVOID) -> DWORD {
+        Sleep(500);
+        TScriptUniverse::scanFolders(g_bytecodeClassDir, true, true);
+        TScriptUniverse::scanFolders(g_classDir, true, false);
+        return 0;
+    }, NULL, 0, NULL);
+    return result;
+}
 namespace TServerList {
     void __cdecl enterNextConnectorMode(int mode) {
         TGameEnvironment_universe = *(void**)(base + (0x7FF97FC191B0 - 0x7FF97E840000));
+        True_TGameServer_Initialize = (void*(__fastcall*)(void*, void*))(base + (0x7ff97f2e5a60 - 0x7FF97E840000));
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        DetourAttach(&(PVOID&)True_TGameServer_Initialize, (void*)Hooked_TGameServer_Initialize);
+        DetourTransactionCommit();
         TString* enc = (TString*)alloc(8);
         THashList_encodesimple(enc, new TString("StartScript_Connector"));
         TGraalVar* sc = reinterpret_cast<TGraalVar*>(alloc(600));
         TGraalVar_Constructor(sc, enc);
         ((void(__fastcall*)(TGraalVar*, int64_t))(sc->vtable[20]))(sc, 2);
-        TScriptUniverse_addStaticObject(TGameEnvironment_universe, sc);
         g_startScript = sc;
         std::string gs2, exeDir = TFileManager::GetExeDir();
-        bool found = false;
-        std::vector<std::string> paths;
-        if (!exeDir.empty()) { paths.push_back(exeDir + "\\bootstrap.gs2"); paths.push_back(exeDir + "\\license\\bootstrap.gs2"); }
-        paths.push_back("bootstrap.gs2"); paths.push_back("license/bootstrap.gs2");
-        for (const auto& p : paths) {
-            std::ifstream f(p);
-            if (f.good()) { std::stringstream buf; buf << f.rdbuf(); gs2 = buf.str(); g_bootstrapPath = p; found = true; break; }
-        }
+        std::string bootstrapPath = exeDir.empty() ? "offline\\bootstrap.gs2" : exeDir + "\\offline\\bootstrap.gs2";
+        std::ifstream f(bootstrapPath);
+        bool found = f.good();
+        if (found) { std::stringstream buf; buf << f.rdbuf(); gs2 = buf.str(); g_bootstrapPath = bootstrapPath; }
         if (!found) {
             HMODULE hm = GetModuleHandleA("GLauncherW.dll");
-            HRSRC hr = FindResourceA(hm, MAKEINTRESOURCE(101), RT_RCDATA);
+            HRSRC hr = FindResourceA(hm, MAKEINTRESOURCE(420), RT_RCDATA);
             if (!hr) return;
             HGLOBAL hl = LoadResource(hm, hr);
             gs2 = std::string((char*)LockResource(hl), SizeofResource(hm, hr));
@@ -378,24 +388,31 @@ namespace TServerList {
         TScriptUniverse::patchBootstrap(gs2);
         auto resp = GS2Context::Compile(gs2);
         if (!resp.success) TLog::WriteMessage("GS2Parser", "Compile error: %s", resp.errors.empty() ? "Unknown error" : resp.errors[0].msg().c_str());
+        TScriptUniverse_addStaticObject(TGameEnvironment_universe, sc);
         TGraalVar_SetScript(sc, new TString((char*)resp.bytecode.buffer(), resp.bytecode.length()));
-        if (g_DevMode >= 0) {
-            g_bytecodeWeaponDir = exeDir.empty() ? "bytecode\\weapons" : exeDir + "\\bytecode\\weapons";
-            g_bytecodeClassDir  = exeDir.empty() ? "bytecode\\classes" : exeDir + "\\bytecode\\classes";
-            TScriptUniverse::scanFolders(g_bytecodeClassDir, true, true);
-            TScriptUniverse::scanFolders(g_bytecodeWeaponDir, false, true);
-        }
-        if (g_DevMode >= 1) {
-            g_weaponDir = exeDir.empty() ? "offline\\weapons" : exeDir + "\\offline\\weapons";
-            g_classDir  = exeDir.empty() ? "offline\\classes" : exeDir + "\\offline\\classes";
-            TScriptUniverse::scanFolders(g_weaponDir, false, false);
-            TScriptUniverse::scanFolders(g_classDir, true, false);
-        }
-        if (g_DevMode >= 0) {
-            g_watcherRunning = true;
-            g_watcherThread = CreateThread(NULL, 0, TFileManager::WatcherThread, NULL, 0, NULL);
-            TLog::WriteMessage("compiler", "Watching offline/, bytecode/, and bootstrap.gs2 for changes");
-        }
+        CreateThread(NULL, 0, [](LPVOID pExeDir) -> DWORD {
+            Sleep(1500);
+            std::string exeDir = pExeDir ? (char*)pExeDir : "";
+            free(pExeDir);
+            if (g_DevMode >= 0) {
+                g_bytecodeWeaponDir = exeDir.empty() ? "bytecode\\weapons" : exeDir + "\\bytecode\\weapons";
+                g_bytecodeClassDir  = exeDir.empty() ? "bytecode\\classes" : exeDir + "\\bytecode\\classes";
+                TScriptUniverse::scanFolders(g_bytecodeClassDir, true, true);
+                TScriptUniverse::scanFolders(g_bytecodeWeaponDir, false, true);
+            }
+            if (g_DevMode >= 1) {
+                g_weaponDir = exeDir.empty() ? "offline\\weapons" : exeDir + "\\offline\\weapons";
+                g_classDir  = exeDir.empty() ? "offline\\classes" : exeDir + "\\offline\\classes";
+                TScriptUniverse::scanFolders(g_classDir, true, false);
+                TScriptUniverse::scanFolders(g_weaponDir, false, false);
+            }
+            if (g_DevMode >= 0) {
+                g_watcherRunning = true;
+                g_watcherThread = CreateThread(NULL, 0, TFileManager::WatcherThread, NULL, 0, NULL);
+                TLog::WriteMessage("compiler", "Watching offline/, bytecode/, and bootstrap.gs2 for changes");
+            }
+            return 0;
+        }, _strdup(exeDir.c_str()), 0, NULL);
     }
 }
 namespace TFileManager {
@@ -473,11 +490,11 @@ namespace TFileManager {
             }
             CloseHandle(h);
         };
-    std::thread t1([&]{ watchDir(g_classDir, ".gs2", false, true, TScriptUniverse::addClassScript, removeScript); });
-        std::thread t2([&]{ watchDir(g_bytecodeWeaponDir, ".gs2bc", true, false, TScriptUniverse::addWeaponScriptRaw, removeScript); });
-        std::thread t3([&]{ watchDir(g_bytecodeClassDir, ".gs2bc", true, true, TScriptUniverse::addClassRaw, removeScript); });
+        std::thread t1([&]{ watchDir(g_classDir, ".gs2", false, true, [](const std::string& n, const std::string& c){ TScriptUniverse::addClassScript(n, c, true); }, removeScript); });
+        std::thread t2([&]{ watchDir(g_bytecodeWeaponDir, ".gs2bc", true, false, [](const std::string& n, const std::string& c){ TScriptUniverse::addWeaponScript(n, c, false); }, removeScript); });
+        std::thread t3([&]{ watchDir(g_bytecodeClassDir, ".gs2bc", true, true, [](const std::string& n, const std::string& c){ TScriptUniverse::addClassScript(n, c, false); }, removeScript); });
         std::thread t4([&]{ watchBootstrap(); });
-        watchDir(g_weaponDir, ".gs2", false, false, TScriptUniverse::addWeaponScript, removeScript);
+        watchDir(g_weaponDir, ".gs2", false, false, [](const std::string& n, const std::string& c){ TScriptUniverse::addWeaponScript(n, c, true); }, removeScript);
         t1.join(); t2.join(); t3.join(); t4.join();
         return 0;
     }
@@ -492,64 +509,6 @@ namespace TFileManager {
         paths.push_back("license.graal");
         paths.push_back("license/license.graal");
         return paths;
-    }
-
-    static std::wstring patchPathW(const wchar_t* raw) {
-        if (!raw) return {};
-        std::wstring path(raw);
-        for (auto& c : path) if (c == L'\\') c = L'/';
-        if (path.find(L"GraalOnline Worlds") == std::wstring::npos) return {};
-        if (g_oldBase.empty()) g_oldBase = path.substr(0, path.find(L"GraalOnline Worlds/") + wcslen(L"GraalOnline Worlds/"));
-        std::wstring patched = g_newBase + path.substr(g_oldBase.size());
-        for (auto& c : patched) if (c == L'/') c = L'\\';
-        std::wstring dir = patched.substr(0, patched.rfind(L'\\'));
-        if (!g_madeDirs.count(dir)) {
-            for (size_t i = 0; i < dir.size(); i++) if (dir[i] == L'\\' && i > 2) { std::wstring sub = dir.substr(0, i); True_CreateDirectoryW(sub.c_str(), NULL); }
-            True_CreateDirectoryW(dir.c_str(), NULL);
-            g_madeDirs.insert(dir);
-        }
-        return patched;
-    }
-    static HANDLE WINAPI Hook_CreateFileW(LPCWSTR f, DWORD a, DWORD s, LPSECURITY_ATTRIBUTES sa, DWORD c, DWORD fl, HANDLE t) { std::wstring p = patchPathW(f); return True_CreateFileW(p.empty() ? f : p.c_str(), a, s, sa, c, fl, t); }
-    static HANDLE WINAPI Hook_CreateFile2(LPCWSTR f, DWORD a, DWORD s, DWORD c, LPCREATEFILE2_EXTENDED_PARAMETERS e) { std::wstring p = patchPathW(f); return True_CreateFile2(p.empty() ? f : p.c_str(), a, s, c, e); }
-    static DWORD WINAPI Hook_GetFileAttributesW(LPCWSTR p) {
-        if (g_DebugMode) { char tmp[MAX_PATH]; WideCharToMultiByte(CP_ACP, 0, p, -1, tmp, MAX_PATH, NULL, NULL); TLog::WriteMessage("AttrW", "%s", tmp); }
-        std::wstring pw = patchPathW(p); return True_GetFileAttributesW(pw.empty() ? p : pw.c_str());
-    }
-    static DWORD WINAPI Hook_GetFileAttributesA(LPCSTR p) {
-        if (g_DebugMode) TLog::WriteMessage("AttrA", "%s", p);
-        if (p && strstr(p, "GraalOnline Worlds")) {
-            wchar_t w[MAX_PATH]; MultiByteToWideChar(CP_ACP, 0, p, -1, w, MAX_PATH);
-            std::wstring pw = patchPathW(w);
-            if (!pw.empty()) { char n[MAX_PATH]; WideCharToMultiByte(CP_ACP, 0, pw.c_str(), -1, n, MAX_PATH, NULL, NULL); return True_GetFileAttributesA(n); }
-        }
-        return True_GetFileAttributesA(p);
-    }
-    static HANDLE WINAPI Hook_FindFirstFileW(LPCWSTR p, LPWIN32_FIND_DATAW fd) {
-        if (g_DebugMode) { char tmp[MAX_PATH]; WideCharToMultiByte(CP_ACP, 0, p, -1, tmp, MAX_PATH, NULL, NULL); TLog::WriteMessage("FindW", "%s", tmp); }
-        std::wstring pw = patchPathW(p); return True_FindFirstFileW(pw.empty() ? p : pw.c_str(), fd);
-    }
-    static HANDLE WINAPI Hook_FindFirstFileA(LPCSTR p, LPWIN32_FIND_DATAA fd) {
-        if (g_DebugMode) TLog::WriteMessage("FindA", "%s", p);
-        if (p && strstr(p, "GraalOnline Worlds")) {
-            wchar_t w[MAX_PATH]; MultiByteToWideChar(CP_ACP, 0, p, -1, w, MAX_PATH);
-            std::wstring pw = patchPathW(w);
-            if (!pw.empty()) { char n[MAX_PATH]; WideCharToMultiByte(CP_ACP, 0, pw.c_str(), -1, n, MAX_PATH, NULL, NULL); return True_FindFirstFileA(n, fd); }
-        }
-        return True_FindFirstFileA(p, fd);
-    }
-    static BOOL WINAPI Hook_CreateDirectoryW(LPCWSTR p, LPSECURITY_ATTRIBUTES sa) {
-        if (p) {
-            std::wstring path(p);
-            if (path.find(L"GraalOnline Worlds") != std::wstring::npos) {
-                for (auto& c : path) if (c == L'\\') c = L'/';
-                if (g_oldBase.empty()) g_oldBase = path.substr(0, path.find(L"GraalOnline Worlds/") + wcslen(L"GraalOnline Worlds/"));
-                std::wstring pt = g_newBase + path.substr(g_oldBase.size());
-                for (auto& c : pt) if (c == L'/') c = L'\\';
-                return True_CreateDirectoryW(pt.c_str(), sa);
-            }
-        }
-        return True_CreateDirectoryW(p, sa);
     }
 }
 namespace TClient {
@@ -577,25 +536,12 @@ namespace TClient {
                 DetourTransactionCommit();
             }
         }
-        HMODULE hK = GetModuleHandleA("kernel32.dll");
-        True_CreateFileW        = (HANDLE(WINAPI*)(LPCWSTR,DWORD,DWORD,LPSECURITY_ATTRIBUTES,DWORD,DWORD,HANDLE))GetProcAddress(hK, "CreateFileW");
-        True_CreateFile2        = (HANDLE(WINAPI*)(LPCWSTR,DWORD,DWORD,DWORD,LPCREATEFILE2_EXTENDED_PARAMETERS))GetProcAddress(hK, "CreateFile2");
-        True_CreateDirectoryW   = (BOOL(WINAPI*)(LPCWSTR,LPSECURITY_ATTRIBUTES))GetProcAddress(hK, "CreateDirectoryW");
-        True_GetFileAttributesW = (DWORD(WINAPI*)(LPCWSTR))GetProcAddress(hK, "GetFileAttributesW");
-        True_GetFileAttributesA = (DWORD(WINAPI*)(LPCSTR))GetProcAddress(hK, "GetFileAttributesA");
-        True_FindFirstFileW     = (HANDLE(WINAPI*)(LPCWSTR,LPWIN32_FIND_DATAW))GetProcAddress(hK, "FindFirstFileW");
-        True_FindFirstFileA     = (HANDLE(WINAPI*)(LPCSTR,LPWIN32_FIND_DATAA))GetProcAddress(hK, "FindFirstFileA");
+        Memory::hook((void*)TServerList_enterNextConnectorMode, (void*)TServerList::enterNextConnectorMode, 17);
+        True_getExeDir = (void*(__fastcall*)(void*))(base + (0x7ff97f18ddc0 - 0x7FF97E840000));
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        if (True_CreateFileW)        DetourAttach(&(PVOID&)True_CreateFileW, TFileManager::Hook_CreateFileW);
-        if (True_CreateFile2)        DetourAttach(&(PVOID&)True_CreateFile2, TFileManager::Hook_CreateFile2);
-        if (True_CreateDirectoryW)   DetourAttach(&(PVOID&)True_CreateDirectoryW, TFileManager::Hook_CreateDirectoryW);
-        if (True_GetFileAttributesW) DetourAttach(&(PVOID&)True_GetFileAttributesW, TFileManager::Hook_GetFileAttributesW);
-        if (True_GetFileAttributesA) DetourAttach(&(PVOID&)True_GetFileAttributesA, TFileManager::Hook_GetFileAttributesA);
-        if (True_FindFirstFileW)     DetourAttach(&(PVOID&)True_FindFirstFileW, TFileManager::Hook_FindFirstFileW);
-        if (True_FindFirstFileA)     DetourAttach(&(PVOID&)True_FindFirstFileA, TFileManager::Hook_FindFirstFileA);
+        DetourAttach(&(PVOID&)True_getExeDir, (void*)Hooked_getExeDir);
         DetourTransactionCommit();
-        Memory::hook((void*)TServerList_enterNextConnectorMode, (void*)TServerList::enterNextConnectorMode, 17);
         HKEY hKey;
         if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\GLauncher", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
             DWORD v = 0, sz = sizeof(v);
@@ -603,9 +549,6 @@ namespace TClient {
             RegCloseKey(hKey);
         }
         if (g_EnableConsole) { SetupConsole(); TLog::enableAnsiConsole(); Memory::hook((void*)TLog_echo, (void*)TLog::echo, 18); g_TLog_echoed = true; }
-        std::string exeDir = TFileManager::GetExeDir();
-        std::wstring exeDirW(exeDir.begin(), exeDir.end());
-        g_newBase = exeDirW + L"\\Reborn_cache\\";
         int argc; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         for (int i = 1; i < argc; i++) {
             std::wstring arg(argv[i]);
