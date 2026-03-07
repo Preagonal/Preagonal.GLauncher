@@ -9,6 +9,7 @@
 #include <fstream>
 #include <thread>
 #include <sstream>
+#include <algorithm>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <shellapi.h>
@@ -115,6 +116,7 @@ static const char* getTagColor(const char* tag) {
 }
 static std::string hashFile(const std::string& c) { char b[32]; snprintf(b, sizeof(b), "%zx", std::hash<std::string>{}(c)); return b; }
 extern "C" __declspec(dllexport) void export_function() {}
+namespace TLog { void __cdecl echo(int64_t*, int64_t, int64_t, int64_t, const char*, char); }
 LRESULT CALLBACK HiddenWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg != WM_HOTKEY) return DefWindowProc(hwnd, msg, wParam, lParam);
     if (wParam == HOTKEY_SERVER) {
@@ -135,7 +137,7 @@ LRESULT CALLBACK HiddenWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             RegSetValueExA(hKey, "EnableConsole", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
             RegCloseKey(hKey);
         }
-        if (g_EnableConsole) { SetupConsole(); ShowWindow(GetConsoleWindow(), SW_SHOW); MessageBoxA(NULL, "Console enabled.", "GLauncher", MB_OK|MB_ICONINFORMATION); }
+        if (g_EnableConsole) { SetupConsole(); HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE); DWORD mode = 0; GetConsoleMode(h, &mode); SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); Memory::hook((void*)TLog_echo, (void*)TLog::echo, 18); SetConsoleTitleA("Reborn Console"); ShowWindow(GetConsoleWindow(), SW_SHOW); MessageBoxA(NULL, "Console enabled.", "GLauncher", MB_OK|MB_ICONINFORMATION); }
         else { CloseConsole(); MessageBoxA(NULL, "Console disabled.", "GLauncher", MB_OK|MB_ICONINFORMATION); }
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -200,6 +202,7 @@ bool ShowServerDialog(const std::string& file) {
     MSG msg; g_selectedServer = -1;
     while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
     if (hGraal) ShowWindow(hGraal, SW_SHOW);
+    if (hIcon) DestroyIcon(hIcon);
     if (g_selectedServer < 0) return false;
     g_selectedHost = g_servers[g_selectedServer].ip;
     g_selectedPort = g_servers[g_selectedServer].port;
@@ -335,6 +338,7 @@ namespace TScriptUniverse {
 static void* (__fastcall* True_getExeDir)(void*) = nullptr;
 static void* __fastcall Hooked_getExeDir(void* out) {
     void* ret = True_getExeDir(out);
+    auto toFwd = [](std::string s) { std::replace(s.begin(), s.end(), '\\', '/'); return s; };
     auto patchDAT = [](uintptr_t offset, const std::string& val) {
         char** dat = (char**)(base + offset);
         if (*dat) {
@@ -343,11 +347,29 @@ static void* __fastcall Hooked_getExeDir(void* out) {
             memcpy(*dat + 8, val.c_str(), val.size() + 1);
         }
     };
-    patchDAT(0x7ff97fc18c38 - 0x7FF97E840000, TFileManager::GetExeDir() + "\\Reborn_cache\\");
-    patchDAT(0x7ff97fc19118 - 0x7FF97E840000, TFileManager::GetExeDir() + "\\Reborn_cache\\");
+    patchDAT(0x7ff97fc18c38 - 0x7FF97E840000, toFwd(TFileManager::GetExeDir()) + "/Reborn_cache/");
+    patchDAT(0x7ff97fc19118 - 0x7FF97E840000, toFwd(TFileManager::GetExeDir()) + "/Reborn_cache/");
     return ret;
 }
 static void* (__fastcall* True_TGameServer_Initialize)(void*, void*) = nullptr;
+static void (__cdecl* True_UpdatePlatformTelemetry)() = nullptr;
+static std::string g_currentServerName;
+static std::atomic<bool> g_forceServerNameUpdate = false;
+static void applyWindowTitle() {
+    if (g_currentServerName.empty()) return;
+    g_hFoundWindow = NULL;
+    EnumWindows(EnumWindowsProc, GetCurrentProcessId());
+    if (g_hFoundWindow) SetWindowTextA(g_hFoundWindow, ("Reborn Worlds - " + g_currentServerName).c_str());
+}
+static void __cdecl Hooked_UpdatePlatformTelemetry() {
+    True_UpdatePlatformTelemetry();
+    char** serverNamePtr = (char**)(base + (0x7ff97fc18c30 - 0x7FF97E840000));
+    if (!serverNamePtr || !*serverNamePtr) return;
+    std::string serverName(*serverNamePtr + 8);
+    if (serverName.empty() || serverName == g_currentServerName) return;
+    g_currentServerName = serverName;
+    applyWindowTitle();
+}
 static void* __fastcall Hooked_TGameServer_Initialize(void* serverObj, void* param_2) {
     void* result = True_TGameServer_Initialize(serverObj, param_2);
     TLog::WriteMessage("glauncher", "Server change detected, reloading classes.");
@@ -355,6 +377,8 @@ static void* __fastcall Hooked_TGameServer_Initialize(void* serverObj, void* par
         Sleep(500);
         TScriptUniverse::scanFolders(g_bytecodeClassDir, true, true);
         TScriptUniverse::scanFolders(g_classDir, true, false);
+        Sleep(1000);
+        Hooked_UpdatePlatformTelemetry();
         return 0;
     }, NULL, 0, NULL);
     return result;
@@ -409,6 +433,7 @@ namespace TServerList {
             if (g_DevMode >= 0) {
                 g_watcherRunning = true;
                 g_watcherThread = CreateThread(NULL, 0, TFileManager::WatcherThread, NULL, 0, NULL);
+                if (g_watcherThread) { CloseHandle(g_watcherThread); g_watcherThread = NULL; }
                 TLog::WriteMessage("compiler", "Watching offline/, bytecode/, and bootstrap.gs2 for changes");
             }
             return 0;
@@ -538,9 +563,11 @@ namespace TClient {
         }
         Memory::hook((void*)TServerList_enterNextConnectorMode, (void*)TServerList::enterNextConnectorMode, 17);
         True_getExeDir = (void*(__fastcall*)(void*))(base + (0x7ff97f18ddc0 - 0x7FF97E840000));
+        True_UpdatePlatformTelemetry = (void(__cdecl*)())(base + (0x7ff97f18e130 - 0x7FF97E840000));
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         DetourAttach(&(PVOID&)True_getExeDir, (void*)Hooked_getExeDir);
+        DetourAttach(&(PVOID&)True_UpdatePlatformTelemetry, (void*)Hooked_UpdatePlatformTelemetry);
         DetourTransactionCommit();
         HKEY hKey;
         if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\GLauncher", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
@@ -548,7 +575,7 @@ namespace TClient {
             if (RegQueryValueExA(hKey, "EnableConsole", NULL, NULL, (BYTE*)&v, &sz) == ERROR_SUCCESS) g_EnableConsole = v == 1;
             RegCloseKey(hKey);
         }
-        if (g_EnableConsole) { SetupConsole(); TLog::enableAnsiConsole(); Memory::hook((void*)TLog_echo, (void*)TLog::echo, 18); g_TLog_echoed = true; }
+        if (g_EnableConsole) { SetupConsole(); SetConsoleTitleA("Reborn Console"); TLog::enableAnsiConsole(); Memory::hook((void*)TLog_echo, (void*)TLog::echo, 18); g_TLog_echoed = true; }
         int argc; LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         for (int i = 1; i < argc; i++) {
             std::wstring arg(argv[i]);
@@ -560,6 +587,7 @@ namespace TClient {
         }
         LocalFree(argv);
         g_hHookThread = CreateThread(NULL, 0, HotkeyThread, hModule, 0, &g_HookThreadId);
+        if (g_hHookThread) { CloseHandle(g_hHookThread); g_hHookThread = NULL; }
         bool showDialog = false;
         if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\GLauncher", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
             DWORD v = 0, sz = sizeof(v);
@@ -575,6 +603,8 @@ namespace TClient {
             }
         }
         if (g_EnableConsole) ShowWindow(GetConsoleWindow(), SW_SHOW);
+        EnumWindows(EnumWindowsProc, GetCurrentProcessId());
+        if (g_hFoundWindow) SetWindowTextA(g_hFoundWindow, "Reborn Worlds");
         char exePath[MAX_PATH]; GetModuleFileNameA(NULL, exePath, MAX_PATH);
         std::string cmd = std::string("\"") + exePath + "\" \"%1\"", icon = std::string(exePath) + ",0";
         TLog::WriteMessage("glauncher", "Registering graal:// protocol...");
