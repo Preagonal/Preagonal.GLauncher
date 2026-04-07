@@ -341,11 +341,12 @@ static void* __fastcall Hooked_getExeDir(void* out) {
     auto toFwd = [](std::string s) { std::replace(s.begin(), s.end(), '\\', '/'); return s; };
     auto patchDAT = [](uintptr_t offset, const std::string& val) {
         char** dat = (char**)(base + offset);
-        if (*dat) {
-            *(uint32_t*)(*dat + 0) = (uint32_t)val.size();
-            *(uint32_t*)(*dat + 4) = (uint32_t)val.size();
-            memcpy(*dat + 8, val.c_str(), val.size() + 1);
-        }
+        size_t sz = val.size();
+        char* buf = (char*)alloc(8 + sz + 1);
+        *(uint32_t*)(buf + 0) = (uint32_t)sz;
+        *(uint32_t*)(buf + 4) = (uint32_t)sz;
+        memcpy(buf + 8, val.c_str(), sz + 1);
+        *dat = buf;
     };
     patchDAT(0x7ff97fc18c38 - 0x7FF97E840000, toFwd(TFileManager::GetExeDir()) + "/Reborn_cache/");
     patchDAT(0x7ff97fc19118 - 0x7FF97E840000, toFwd(TFileManager::GetExeDir()) + "/Reborn_cache/");
@@ -353,14 +354,80 @@ static void* __fastcall Hooked_getExeDir(void* out) {
 }
 static void* (__fastcall* True_TGameServer_Initialize)(void*, void*) = nullptr;
 static void (__cdecl* True_UpdatePlatformTelemetry)() = nullptr;
-static std::string g_currentServerName;
+static std::string g_currentServerName, g_currentLevelName;
 static std::atomic<bool> g_forceServerNameUpdate = false;
+static void (__fastcall* True_TPlayer_changeLevel)(void*, void*) = nullptr;
+namespace DiscordRPC {
+    struct DiscordRichPresence {
+        const char* state;
+        const char* details;
+        int64_t startTimestamp;
+        int64_t endTimestamp;
+        const char* largeImageKey;
+        const char* largeImageText;
+        const char* smallImageKey;
+        const char* smallImageText;
+        const char* partyId;
+        int partySize, partyMax;
+        const char* matchSecret;
+        const char* joinSecret;
+        const char* spectateSecret;
+        int8_t instance;
+    };
+    struct DiscordEventHandlers { void* ready; void* disconnected; void* errored; void* joinGame; void* spectateGame; void* joinRequest; };
+    using InitFn = void(*)(const char*, DiscordEventHandlers*, int, const char*);
+    using UpdateFn = void(*)(const DiscordRichPresence*);
+    using RunCallbacksFn = void(*)();
+    using RegisterFn = void(*)(const char*, const char*);
+    using ShutdownFn = void(*)();
+    static InitFn Discord_Initialize = nullptr;
+    static UpdateFn Discord_UpdatePresence = nullptr;
+    static RunCallbacksFn Discord_RunCallbacks = nullptr;
+    static RegisterFn Discord_Register = nullptr;
+    static ShutdownFn Discord_Shutdown = nullptr;
+    static int64_t g_startTime = 0;
+    static bool load() {
+        if (Discord_Initialize) return true;
+        std::string dllPath = TFileManager::GetExeDir() + "\\Reborn_data\\Plugins\\x86_64\\discord-rpc.dll";
+        HMODULE h = LoadLibraryA(dllPath.c_str());
+        if (!h) { TLog::WriteMessage("discordrpc", "failed to load discord-rpc.dll"); return false; }
+        Discord_Initialize = (InitFn)GetProcAddress(h, "Discord_Initialize");
+        Discord_UpdatePresence = (UpdateFn)GetProcAddress(h, "Discord_UpdatePresence");
+        Discord_RunCallbacks = (RunCallbacksFn)GetProcAddress(h, "Discord_RunCallbacks");
+        Discord_Register = (RegisterFn)GetProcAddress(h, "Discord_Register");
+        Discord_Shutdown = (ShutdownFn)GetProcAddress(h, "Discord_Shutdown");
+        return Discord_Initialize && Discord_UpdatePresence;
+    }
+    static void update(const std::string& server, const std::string& level = "") {
+        if (!load()) return;
+        DiscordRichPresence p = {};
+        p.details = server.empty() ? "In menus" : server.c_str();
+        p.state = level.empty() ? nullptr : level.c_str();
+        p.startTimestamp = g_startTime;
+        p.largeImageKey = "icon";
+        Discord_UpdatePresence(&p);
+        if (Discord_RunCallbacks) Discord_RunCallbacks();
+    }
+    static void init() {
+        TLog::WriteMessage("discordrpc", "init called");
+        if (!load()) return;
+        g_startTime = (int64_t)time(nullptr);
+        DiscordEventHandlers handlers = {};
+        char exePath[MAX_PATH]; GetModuleFileNameA(NULL, exePath, MAX_PATH);
+        Discord_Initialize("1482068129399177248", &handlers, 1, nullptr);
+        if (Discord_Register) Discord_Register("1482068129399177248", exePath);
+        update("");
+    }
+}
+
 static void applyWindowTitle() {
     if (g_currentServerName.empty()) return;
     g_hFoundWindow = NULL;
-    EnumWindows(EnumWindowsProc, GetCurrentProcessId());
-    if (g_hFoundWindow) SetWindowTextA(g_hFoundWindow, ("Reborn Worlds - " + g_currentServerName).c_str());
+    EnumWindows(EnumWindowsProc, GetCurrentProcessId());//"Reborn Worlds - " + 
+    if (g_hFoundWindow) SetWindowTextA(g_hFoundWindow, (g_currentServerName).c_str());
+    DiscordRPC::update(g_currentServerName, g_currentLevelName);
 }
+
 static void __cdecl Hooked_UpdatePlatformTelemetry() {
     True_UpdatePlatformTelemetry();
     char** serverNamePtr = (char**)(base + (0x7ff97fc18c30 - 0x7FF97E840000));
@@ -370,6 +437,17 @@ static void __cdecl Hooked_UpdatePlatformTelemetry() {
     g_currentServerName = serverName;
     applyWindowTitle();
 }
+
+static void __fastcall Hooked_TPlayer_changeLevel(void* player, void* levelName) {
+    True_TPlayer_changeLevel(player, levelName);
+    void* lvlPtr = *(void**)(base + (0x7ff97fc1d778 - 0x7FF97E840000));
+    if (!lvlPtr) return;
+    std::string name((char*)lvlPtr + 8);
+    if (name.empty() || name == g_currentLevelName) return;
+    g_currentLevelName = name;
+    if (!g_currentServerName.empty()) DiscordRPC::update(g_currentServerName, g_currentLevelName);
+}
+
 static void* __fastcall Hooked_TGameServer_Initialize(void* serverObj, void* param_2) {
     void* result = True_TGameServer_Initialize(serverObj, param_2);
     TLog::WriteMessage("glauncher", "Server change detected, reloading classes.");
@@ -377,12 +455,17 @@ static void* __fastcall Hooked_TGameServer_Initialize(void* serverObj, void* par
         Sleep(500);
         TScriptUniverse::scanFolders(g_bytecodeClassDir, true, true);
         TScriptUniverse::scanFolders(g_classDir, true, false);
+
+        void* lvlPtr = *(void**)(base + (0x7ff97fc1d778 - 0x7FF97E840000));
+        if (lvlPtr) g_currentLevelName = std::string((char*)lvlPtr + 8);
+
         Sleep(1000);
         Hooked_UpdatePlatformTelemetry();
         return 0;
     }, NULL, 0, NULL);
     return result;
 }
+
 namespace TServerList {
     void __cdecl enterNextConnectorMode(int mode) {
         TGameEnvironment_universe = *(void**)(base + (0x7FF97FC191B0 - 0x7FF97E840000));
@@ -390,6 +473,8 @@ namespace TServerList {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         DetourAttach(&(PVOID&)True_TGameServer_Initialize, (void*)Hooked_TGameServer_Initialize);
+        True_TPlayer_changeLevel = (void(__fastcall*)(void*, void*))(base + (0x7ff97f2034f0 - 0x7FF97E840000));
+        DetourAttach(&(PVOID&)True_TPlayer_changeLevel, (void*)Hooked_TPlayer_changeLevel);
         DetourTransactionCommit();
         TString* enc = (TString*)alloc(8);
         THashList_encodesimple(enc, new TString("StartScript_Connector"));
@@ -440,6 +525,7 @@ namespace TServerList {
         }, _strdup(exeDir.c_str()), 0, NULL);
     }
 }
+
 namespace TFileManager {
     DWORD WINAPI WatcherThread(LPVOID) {
         std::map<std::string, std::string> lastHash;
@@ -536,6 +622,7 @@ namespace TFileManager {
         return paths;
     }
 }
+
 namespace TClient {
     void initialize(HMODULE hModule) {
         HMODULE hGraal = NULL;
@@ -586,6 +673,7 @@ namespace TClient {
             }
         }
         LocalFree(argv);
+        CreateThread(NULL, 0, [](LPVOID) -> DWORD { Sleep(2000); DiscordRPC::init(); return 0; }, NULL, 0, NULL);
         g_hHookThread = CreateThread(NULL, 0, HotkeyThread, hModule, 0, &g_HookThreadId);
         if (g_hHookThread) { CloseHandle(g_hHookThread); g_hHookThread = NULL; }
         bool showDialog = false;
